@@ -76,7 +76,7 @@ public final class ApkCloneEngine {
                     Element item = (Element) nodes.item(i);
                     if (!providerStringRefs.contains(item.getAttribute("name"))) continue;
                     String value = item.getTextContent();
-                    item.setTextContent(rewriteAuthority(value, oldPackage, newPackage));
+                    item.setTextContent(rewriteAuthorityList(value, oldPackage, newPackage));
                 }
                 writeXml(stringsDoc, strings);
             }
@@ -157,6 +157,13 @@ public final class ApkCloneEngine {
             }
             provider.setAttributeNS(ANDROID_NS, "android:authorities", String.join(";", values));
         }
+    }
+
+    private static String rewriteAuthorityList(String value, String oldPkg, String newPkg) {
+        String[] authorities = value.split(";");
+        for (int i = 0; i < authorities.length; i++)
+            authorities[i] = rewriteAuthority(authorities[i].trim(), oldPkg, newPkg);
+        return String.join(";", authorities);
     }
 
     private static String rewriteAuthority(String value, String oldPkg, String newPkg) {
