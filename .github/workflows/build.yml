@@ -15,13 +15,23 @@ jobs:
           distribution: temurin
           java-version: '17'
       - uses: android-actions/setup-android@v3
+      - name: Build pinned APKEditor engine
+        run: |
+          git clone https://github.com/REAndroid/APKEditor.git "$RUNNER_TEMP/APKEditor"
+          cd "$RUNNER_TEMP/APKEditor"
+          git checkout 5d94bc08565e30e3e3bb7accbd83138e4d6a8e45
+          ./gradlew --no-daemon fatJar
+          mkdir -p "$GITHUB_WORKSPACE/app/libs"
+          JAR="$(find build/libs -maxdepth 1 -type f -name 'APKEditor-*.jar' | head -n 1)"
+          test -n "$JAR"
+          cp "$JAR" "$GITHUB_WORKSPACE/app/libs/APKEditor.jar"
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.9'
       - name: Install Android SDK 35
         run: sdkmanager 'platforms;android-35' 'build-tools;35.0.0'
       - name: Build debug APK
-        run: gradle --no-daemon assembleDebug
+        run: gradle --no-daemon assembleDebug --stacktrace
       - uses: actions/upload-artifact@v4
         with:
           name: PGRazor-Updater-debug
