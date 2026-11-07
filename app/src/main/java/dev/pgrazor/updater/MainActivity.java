@@ -48,6 +48,7 @@ public class MainActivity extends Activity {
       registerReceiver(receiver, new IntentFilter(DownloadManager.ACTION_DOWNLOAD_COMPLETE), Context.RECEIVER_NOT_EXPORTED);
     else
       registerReceiver(receiver, new IntentFilter(DownloadManager.ACTION_DOWNLOAD_COMPLETE));
+    if (activeDownload != -1) inspectPendingDownload();
     checkRelease();
   }
 
@@ -149,8 +150,17 @@ public class MainActivity extends Activity {
     request.setDestinationInExternalFilesDir(this, Environment.DIRECTORY_DOWNLOADS, "PGRazor-" + tag + ".apk");
     if (activeDownload != -1) { statusText.setText("A download is already running"); return; }
     activeDownload=downloads.enqueue(request);
-    getPreferences(0).edit().putLong("downloadId", activeDownload).putBoolean("apkVerified", false).putString("apkTag", tag).apply();
+    getPreferences(0).edit().putLong("downloadId", activeDownload).putBoolean("apkVerified", false)
+      .putString("apkTag", tag).putString("expectedDigest", expectedDigest).apply();
     statusText.setText("Downloading " + tag + "…");
+  }
+
+  private void inspectPendingDownload() {
+    try (Cursor c = downloads.query(new DownloadManager.Query().setFilterById(activeDownload))) {
+      if (c == null || !c.moveToFirst()) return;
+      int state = c.getInt(c.getColumnIndexOrThrow(DownloadManager.COLUMN_STATUS));
+      if (state == DownloadManager.STATUS_SUCCESSFUL || state == DownloadManager.STATUS_FAILED) downloadComplete();
+    } catch (Exception e) { statusText.setText("Could not resume download: " + e.getMessage()); }
   }
 
   private void downloadComplete() {
@@ -262,6 +272,8 @@ public class MainActivity extends Activity {
 
   private void restoreSettings() {
     android.content.SharedPreferences p=getPreferences(0);
+    tag = p.getString("apkTag", null);
+    expectedDigest = p.getString("expectedDigest", null);
     packageInput.setText(p.getString("packageName",""));
     aliasInput.setText(p.getString("alias",""));
     String u=p.getString("keyUri",null);
