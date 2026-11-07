@@ -59,6 +59,7 @@ public final class ApkCloneEngine {
         String oldPackage = root.getAttribute("package");
         if (oldPackage.isEmpty()) throw new IOException("Original manifest has no package name");
         if (oldPackage.equals(newPackage)) throw new IOException("New package name is identical to the original");
+        normalizeComponentNames(root, oldPackage);
         root.setAttribute("package", newPackage);
 
         Set<String> providerStringRefs = new HashSet<>();
@@ -95,6 +96,26 @@ public final class ApkCloneEngine {
         }
         progress.onProgress("Clone created and signature verified");
         return signed;
+    }
+
+    private static void normalizeComponentNames(Element manifest, String originalPackage) {
+        String[] componentTags = {"application", "activity", "activity-alias", "service", "receiver",
+                "provider", "instrumentation"};
+        String[] classAttributes = {"name", "targetActivity", "backupAgent", "appComponentFactory",
+                "manageSpaceActivity", "parentActivityName", "zygotePreloadName"};
+        for (String tag : componentTags) {
+            NodeList nodes = manifest.getElementsByTagName(tag);
+            for (int i = 0; i < nodes.getLength(); i++) {
+                Element element = (Element) nodes.item(i);
+                for (String attribute : classAttributes) {
+                    String value = element.getAttributeNS(ANDROID_NS, attribute);
+                    if (value.isEmpty() || value.startsWith("@") || value.startsWith("?")) continue;
+                    if (value.startsWith(".")) value = originalPackage + value;
+                    else if (!value.contains(".")) value = originalPackage + "." + value;
+                    element.setAttributeNS(ANDROID_NS, "android:" + attribute, value);
+                }
+            }
+        }
     }
 
     private static void updatePermissions(Document doc, String oldPkg, String newPkg) {
