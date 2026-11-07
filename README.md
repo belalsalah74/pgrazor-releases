@@ -8,7 +8,7 @@ Android updater and APK cloner for the original `jpitty03/PGRazor` release chann
 - Downloads the `PGRazor.apk` asset through Android DownloadManager.
 - Verifies the asset SHA-256 digest when GitHub publishes one.
 - Saves the requested clone package name and keystore selection.
-- Encrypts the saved keystore password with Android Keystore (AES-GCM).
+- Encrypts the keystore and optional private-key passwords with Android Keystore (AES-GCM).
 - Decodes the APK manifest/resources with the pinned APKEditor engine.
 - Changes the manifest package name and updates custom permission names and provider authorities.
 - Preserves relative component class names against the original package namespace.
