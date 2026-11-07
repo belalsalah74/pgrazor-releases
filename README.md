@@ -25,12 +25,12 @@ Download the `PGRazor-Updater-debug` artifact from the Actions run.
 ## Use
 
 1. Install PGRazor Updater.
-2. Open it and wait for the latest PGRazor release check.
-3. Enter a unique lowercase package name, such as `com.example.pgrazor`.
-4. Import your `.jks` or `.keystore` file and enter the alias and password.
-5. Save settings.
-6. Download the latest official PGRazor APK.
-7. Tap **Clone & install downloaded APK** and approve Android's installer.
+2. Enter a unique lowercase package name, such as `com.example.pgrazor`.
+3. Import your `.jks` or `.keystore` file, enter the alias and keystore password, and optionally enter a different private-key password.
+4. Save settings. The app checks the latest release, downloads it, clones it, signs it, and opens Android's installer.
+5. Approve installation. Android always requires your confirmation.
+
+On later launches, a new PGRazor release is processed automatically. The manual download and clone buttons remain available.
 
 The app does not upload your keystore or password. The downloaded original APK remains unchanged.
 
