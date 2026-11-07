@@ -23,7 +23,7 @@ jobs:
           git clone https://github.com/REAndroid/APKEditor.git "$RUNNER_TEMP/APKEditor"
           cd "$RUNNER_TEMP/APKEditor"
           git checkout 5d94bc08565e30e3e3bb7accbd83138e4d6a8e45
-          sed -i 's/compile(files(/implementation(files(/g; s/configurations\\.compile\\.collect/configurations.runtimeClasspath.collect/g' build.gradle
+          sed -i 's/compile(files(/implementation(files(/g; s/configurations.compile.collect/configurations.runtimeClasspath.collect/g' build.gradle
           gradle --no-daemon fatJar
           mkdir -p "$GITHUB_WORKSPACE/app/libs"
           JAR="$(find build/libs -maxdepth 1 -type f -name 'APKEditor-*.jar' | head -n 1)"
