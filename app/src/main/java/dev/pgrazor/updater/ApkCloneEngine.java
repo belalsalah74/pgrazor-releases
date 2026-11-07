@@ -26,7 +26,7 @@ public final class ApkCloneEngine {
     private ApkCloneEngine() {}
 
     public static File cloneAndSign(ContentResolver resolver, Uri sourceApk, Uri keyUri,
-                                    String alias, String password, String newPackage,
+                                    String alias, String storePassword, String keyPassword, String newPackage,
                                     File workRoot, Progress progress) throws Exception {
         if (newPackage == null || !newPackage.matches("[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)+"))
             throw new IllegalArgumentException("Package name must be lowercase, e.g. com.example.pgrazor");
@@ -88,7 +88,7 @@ public final class ApkCloneEngine {
         if (buildResult != 0 || !rebuilt.isFile()) throw new IOException("APKEditor rebuild failed (code " + buildResult + ")");
 
         progress.onProgress("Signing with your keystore…");
-        signApk(rebuilt, signed, resolver, keyUri, alias.trim(), password);
+        signApk(rebuilt, signed, resolver, keyUri, alias.trim(), storePassword, keyPassword);
         progress.onProgress("Verifying signature…");
         ApkVerifier.Result verification = new ApkVerifier.Builder(signed).build().verify();
         if (!verification.isVerified()) {
@@ -190,9 +190,9 @@ public final class ApkCloneEngine {
     }
 
     private static void signApk(File input, File output, ContentResolver resolver,
-                                Uri keyUri, String alias, String password) throws Exception {
-        KeyStore keyStore = loadKeyStore(resolver, keyUri, password);
-        Key key = keyStore.getKey(alias, password.toCharArray());
+                                Uri keyUri, String alias, String storePassword, String keyPassword) throws Exception {
+        KeyStore keyStore = loadKeyStore(resolver, keyUri, storePassword);
+        Key key = keyStore.getKey(alias, keyPassword.toCharArray());
         if (!(key instanceof PrivateKey)) throw new GeneralSecurityException("Alias does not contain a private key");
         Certificate[] chain = keyStore.getCertificateChain(alias);
         if (chain == null || chain.length == 0) throw new GeneralSecurityException("Keystore alias has no certificate chain");
