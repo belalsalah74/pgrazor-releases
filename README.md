@@ -14,6 +14,7 @@ Android updater and APK cloner for the original `jpitty03/PGRazor` release chann
 - Preserves relative component class names against the original package namespace.
 - Rebuilds the APK, signs it with the selected JKS/PKCS12 private key using apksig, and verifies the resulting signature.
 - Opens Android's package installer using a scoped FileProvider URI.
+- After initial configuration, checks for a newer release on every launch and automatically downloads, clones, signs, and presents the installer when a new release is available.
 
 ## Build
 
@@ -39,7 +40,7 @@ PGRazor intentionally keeps its Android package identity compatible with Pokémo
 
 ## Build/test status
 
-The source and CI build pipeline are committed. The first CI build and on-device clone test are still required before treating this as a validated release. A successful compilation alone does not prove that PGRazor functions correctly under a renamed package.
+The full source and CI build pipeline are committed. The first CI build and on-device clone test are still required before treating this as a validated release. A successful compilation alone does not prove that PGRazor functions correctly under a renamed package. See `docs/CLONING-ENGINE.md` and `THIRD_PARTY.md`.
 
 ## Release source
 
