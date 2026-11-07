@@ -229,9 +229,10 @@ public class MainActivity extends Activity {
             Intent install = new Intent(Intent.ACTION_INSTALL_PACKAGE);
             install.setData(contentUri);
             install.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
-            getPreferences(0).edit().putString("lastClonedKey",
-              getPreferences(0).getString("apkTag", tag == null ? "" : tag) + "|" + pkg + "|" + keyAlias + "|" + keystoreUri).apply();
-            startActivity(install);
+            String cloneKey = getPreferences(0).getString("apkTag", tag == null ? "" : tag)
+              + "|" + pkg + "|" + keyAlias + "|" + keystoreUri;
+            getPreferences(0).edit().putString("pendingCloneKey", cloneKey).apply();
+            startActivityForResult(install, 45);
           } catch (Exception e) {
             statusText.setText("Could not open installer: " + e.getMessage());
           }
@@ -256,6 +257,17 @@ public class MainActivity extends Activity {
   }
   @Override protected void onActivityResult(int request,int result,Intent data) {
     super.onActivityResult(request,result,data);
+    if (request == 45) {
+      String pending = getPreferences(0).getString("pendingCloneKey", null);
+      if (result == RESULT_OK && pending != null) {
+        getPreferences(0).edit().putString("lastClonedKey", pending).remove("pendingCloneKey").apply();
+        statusText.setText("Clone installed");
+      } else {
+        getPreferences(0).edit().remove("pendingCloneKey").apply();
+        statusText.setText("Installation was cancelled or not completed");
+      }
+      return;
+    }
     if(request==44 && result==RESULT_OK && data!=null && data.getData()!=null) {
       keystoreUri=data.getData();
       getContentResolver().takePersistableUriPermission(keystoreUri,Intent.FLAG_GRANT_READ_URI_PERMISSION);
@@ -290,7 +302,7 @@ public class MainActivity extends Activity {
 
   private void saveSettings() {
     String pkg=packageInput.getText().toString().trim();
-    if(!pkg.isEmpty() && !pkg.matches("[A-Za-z][A-Za-z0-9_]*(\\.[A-Za-z][A-Za-z0-9_]*)+")) {
+    if(!pkg.isEmpty() && !pkg.matches("[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)+")) {
       statusText.setText("Invalid Android package name"); return;
     }
     try {
