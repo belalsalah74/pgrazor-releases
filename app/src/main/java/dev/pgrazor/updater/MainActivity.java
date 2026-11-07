@@ -7,6 +7,8 @@ import android.database.Cursor;
 import android.net.Uri;
 import android.os.*;
 import android.provider.OpenableColumns;
+import android.content.pm.PackageInfo;
+import androidx.core.content.FileProvider;
 import android.text.InputType;
 import android.view.ViewGroup;
 import android.widget.*;
@@ -56,6 +58,7 @@ public class MainActivity extends Activity {
     releaseText = label("Checking GitHub…", 16, 0xffffffff); releaseText.setPadding(0,dp(24),0,dp(8)); root.addView(releaseText);
     addButton(root, "Check for updates", v -> checkRelease());
     addButton(root, "Download latest PGRazor APK", v -> downloadLatest());
+    addButton(root, "Clone & install downloaded APK", v -> cloneDownloaded());
     section(root, "Clone configuration");
     packageInput = edit("New package name (e.g. com.example.pgrazor)"); root.addView(packageInput);
     section(root, "Signing key");
@@ -163,6 +166,45 @@ public class MainActivity extends Activity {
           throw new Exception("SHA-256 mismatch; refusing this APK");
         runOnUiThread(() -> statusText.setText("Download verified. SHA-256: " + actual));
       } catch(Exception e) { runOnUiThread(() -> statusText.setText("Verification failed: " + e.getMessage())); }
+    });
+  }
+
+  private void cloneDownloaded() {
+    String source = getPreferences(0).getString("apkUri", null);
+    String pkg = packageInput.getText().toString().trim();
+    String keyAlias = aliasInput.getText().toString().trim();
+    String keyPassword = passwordInput.getText().toString();
+    if (source == null) { statusText.setText("Download the official APK first"); return; }
+    if (keystoreUri == null || keyAlias.isEmpty() || keyPassword.isEmpty()) {
+      statusText.setText("Import your keystore and enter its alias and password"); return;
+    }
+    if (!pkg.matches("[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)+")) {
+      statusText.setText("Enter a valid lowercase package name"); return;
+    }
+    statusText.setText("Preparing APK clone…");
+    worker.execute(() -> {
+      try {
+        File work = new File(getFilesDir(), "clone-work");
+        File output = ApkCloneEngine.cloneAndSign(getContentResolver(), Uri.parse(source),
+          keystoreUri, keyAlias, keyPassword, pkg, work,
+          message -> runOnUiThread(() -> statusText.setText(message)));
+        PackageInfo info = getPackageManager().getPackageArchiveInfo(output.getAbsolutePath(), 0);
+        if (info == null || !pkg.equals(info.packageName))
+          throw new SecurityException("Cloned APK package name verification failed");
+        runOnUiThread(() -> {
+          try {
+            Uri contentUri = FileProvider.getUriForFile(this, getPackageName() + ".fileprovider", output);
+            Intent install = new Intent(Intent.ACTION_INSTALL_PACKAGE);
+            install.setData(contentUri);
+            install.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+            startActivity(install);
+          } catch (Exception e) {
+            statusText.setText("Could not open installer: " + e.getMessage());
+          }
+        });
+      } catch (Exception e) {
+        runOnUiThread(() -> statusText.setText("Clone failed: " + e.getMessage()));
+      }
     });
   }
 
