@@ -43,7 +43,11 @@ public class MainActivity extends Activity {
         if (intent.getLongExtra(DownloadManager.EXTRA_DOWNLOAD_ID, -1) == activeDownload) downloadComplete();
       }
     };
-    registerReceiver(receiver, new IntentFilter(DownloadManager.ACTION_DOWNLOAD_COMPLETE), Context.RECEIVER_NOT_EXPORTED);
+    activeDownload = getPreferences(0).getLong("downloadId", -1);
+    if (Build.VERSION.SDK_INT >= 33)
+      registerReceiver(receiver, new IntentFilter(DownloadManager.ACTION_DOWNLOAD_COMPLETE), Context.RECEIVER_NOT_EXPORTED);
+    else
+      registerReceiver(receiver, new IntentFilter(DownloadManager.ACTION_DOWNLOAD_COMPLETE));
     checkRelease();
   }
 
@@ -114,8 +118,9 @@ public class MainActivity extends Activity {
           releaseText.setText("Latest: " + t + "\nPGRazor.apk found\nSHA-256: " + (d.isEmpty() ? "not published" : "available"));
           statusText.setText("Release check complete");
           if (hasCloneConfig()) {
-            String last = getPreferences(0).getString("lastClonedTag", "");
-            if (!t.equals(last)) downloadLatest();
+            String cloneKey = t + "|" + packageInput.getText().toString().trim() + "|" + aliasInput.getText().toString().trim() + "|" + keystoreUri;
+            String last = getPreferences(0).getString("lastClonedKey", "");
+            if (!cloneKey.equals(last)) downloadLatest();
           }
         });
       } catch (Exception e) { runOnUiThread(() -> statusText.setText("Release check failed: " + e.getMessage())); }
@@ -144,13 +149,14 @@ public class MainActivity extends Activity {
     request.setDestinationInExternalFilesDir(this, Environment.DIRECTORY_DOWNLOADS, "PGRazor-" + tag + ".apk");
     if (activeDownload != -1) { statusText.setText("A download is already running"); return; }
     activeDownload=downloads.enqueue(request);
-    getPreferences(0).edit().putBoolean("apkVerified", false).putString("apkTag", tag).apply();
+    getPreferences(0).edit().putLong("downloadId", activeDownload).putBoolean("apkVerified", false).putString("apkTag", tag).apply();
     statusText.setText("Downloading " + tag + "…");
   }
 
   private void downloadComplete() {
     long completedId = activeDownload;
     activeDownload = -1;
+    getPreferences(0).edit().remove("downloadId").apply();
     DownloadManager.Query query=new DownloadManager.Query().setFilterById(completedId);
     try (Cursor c=downloads.query(query)) {
       if (c==null || !c.moveToFirst()) throw new Exception("Download record missing");
@@ -213,8 +219,8 @@ public class MainActivity extends Activity {
             Intent install = new Intent(Intent.ACTION_INSTALL_PACKAGE);
             install.setData(contentUri);
             install.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
-            getPreferences(0).edit().putString("lastClonedTag",
-              getPreferences(0).getString("apkTag", tag == null ? "" : tag)).apply();
+            getPreferences(0).edit().putString("lastClonedKey",
+              getPreferences(0).getString("apkTag", tag == null ? "" : tag) + "|" + pkg + "|" + keyAlias + "|" + keystoreUri).apply();
             startActivity(install);
           } catch (Exception e) {
             statusText.setText("Could not open installer: " + e.getMessage());
