@@ -149,7 +149,9 @@ public class MainActivity extends Activity {
   }
 
   private void downloadComplete() {
-    DownloadManager.Query query=new DownloadManager.Query().setFilterById(activeDownload);
+    long completedId = activeDownload;
+    activeDownload = -1;
+    DownloadManager.Query query=new DownloadManager.Query().setFilterById(completedId);
     try (Cursor c=downloads.query(query)) {
       if (c==null || !c.moveToFirst()) throw new Exception("Download record missing");
       int state=c.getInt(c.getColumnIndexOrThrow(DownloadManager.COLUMN_STATUS));
@@ -171,7 +173,11 @@ public class MainActivity extends Activity {
         String actual=hex.toString();
         if(expectedDigest!=null && !expectedDigest.isEmpty() && !actual.equalsIgnoreCase(expectedDigest))
           throw new Exception("SHA-256 mismatch; refusing this APK");
-        runOnUiThread(() -> statusText.setText("Download verified. SHA-256: " + actual));
+        runOnUiThread(() -> {
+          statusText.setText("Download verified. SHA-256: " + actual);
+          getPreferences(0).edit().putBoolean("apkVerified", true).apply();
+          if (hasCloneConfig()) cloneDownloaded();
+        });
       } catch(Exception e) { runOnUiThread(() -> statusText.setText("Verification failed: " + e.getMessage())); }
     });
   }
