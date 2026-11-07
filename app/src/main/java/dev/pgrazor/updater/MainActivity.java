@@ -27,7 +27,7 @@ public class MainActivity extends Activity {
   private final ExecutorService worker = Executors.newSingleThreadExecutor();
   private DownloadManager downloads;
   private TextView releaseText, statusText, keyText;
-  private EditText packageInput, aliasInput, passwordInput;
+  private EditText packageInput, aliasInput, passwordInput, privateKeyPasswordInput;
   private Uri keystoreUri;
   private String apkUrl, tag, expectedDigest;
   private long activeDownload = -1;
@@ -72,6 +72,7 @@ public class MainActivity extends Activity {
     keyText = label("No keystore selected", 13, 0xffbdb8c8); root.addView(keyText);
     aliasInput = edit("Key alias"); root.addView(aliasInput);
     passwordInput = edit("Keystore password"); passwordInput.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_PASSWORD); root.addView(passwordInput);
+    privateKeyPasswordInput = edit("Private-key password (blank = same as keystore)"); privateKeyPasswordInput.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_PASSWORD); root.addView(privateKeyPasswordInput);
     addButton(root, "Save configuration", v -> saveSettings());
     section(root, "Install");
     addButton(root, "Install original APK (optional)", v -> installDownloaded());
@@ -216,12 +217,14 @@ public class MainActivity extends Activity {
     String source = getPreferences(0).getString("apkUri", null);
     String pkg = packageInput.getText().toString().trim();
     String keyAlias = aliasInput.getText().toString().trim();
-    String keyPassword = passwordInput.getText().toString();
+    String storePassword = passwordInput.getText().toString();
+    String keyPassword = privateKeyPasswordInput.getText().toString();
+    if (keyPassword.isEmpty()) keyPassword = storePassword;
     if (source == null) { statusText.setText("Download the official APK first"); return; }
     if (!getPreferences(0).getBoolean("apkVerified", false)) {
       statusText.setText("Wait for APK verification to finish"); return;
     }
-    if (keystoreUri == null || keyAlias.isEmpty() || keyPassword.isEmpty()) {
+    if (keystoreUri == null || keyAlias.isEmpty() || storePassword.isEmpty()) {
       statusText.setText("Import your keystore and enter its alias and password"); return;
     }
     if (!pkg.matches("[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)+")) {
@@ -232,7 +235,7 @@ public class MainActivity extends Activity {
       try {
         File work = new File(getFilesDir(), "clone-work");
         File output = ApkCloneEngine.cloneAndSign(getContentResolver(), Uri.parse(source),
-          keystoreUri, keyAlias, keyPassword, pkg, work,
+          keystoreUri, keyAlias, storePassword, keyPassword, pkg, work,
           message -> runOnUiThread(() -> statusText.setText(message)));
         PackageInfo info = getPackageManager().getPackageArchiveInfo(output.getAbsolutePath(), 0);
         if (info == null || !pkg.equals(info.packageName))
@@ -305,6 +308,7 @@ public class MainActivity extends Activity {
     String u=p.getString("keyUri",null);
     if(u!=null) { keystoreUri=Uri.parse(u); keyText.setText("Selected: " + displayName(keystoreUri)); }
     try { passwordInput.setText(decrypt(p.getString("secret",null))); } catch(Exception ignored) {}
+    try { privateKeyPasswordInput.setText(decrypt(p.getString("keySecret",null))); } catch(Exception ignored) {}
   }
   private boolean hasCloneConfig() {
     return packageInput != null
@@ -321,8 +325,10 @@ public class MainActivity extends Activity {
     }
     try {
       String encrypted=encrypt(passwordInput.getText().toString());
+      String encryptedKey=encrypt(privateKeyPasswordInput.getText().toString());
       getPreferences(0).edit().putString("packageName",pkg)
-        .putString("alias",aliasInput.getText().toString().trim()).putString("secret",encrypted).apply();
+        .putString("alias",aliasInput.getText().toString().trim()).putString("secret",encrypted)
+        .putString("keySecret",encryptedKey).apply();
       statusText.setText("Settings saved on this device");
       checkRelease();
     } catch(Exception e) { statusText.setText("Could not protect password: " + e.getMessage()); }
