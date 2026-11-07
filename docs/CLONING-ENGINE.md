@@ -26,8 +26,10 @@ PGRazor's own installation documentation says its Android package identity is ke
 
 Source: https://github.com/jpitty03/PGRazor
 
-## Current implementation status
+## Implementation in this repository
 
-The Android app currently performs release lookup, APK download, SHA-256 verification (when the GitHub asset digest is available), local configuration storage, and installation handoff.
+The current source includes an APKEditor-based transformation pipeline. It decodes the binary manifest/resources while retaining raw DEX files, normalizes relative component class names against the original package, changes the manifest package, updates declared custom permissions and provider authorities (including string resources), rebuilds the APK, signs with the selected JKS/PKCS12 key using Android apksig, and verifies the resulting signature.
 
-The actual APK transformation and signing pipeline is **not implemented yet**. The package name and keystore inputs are configuration only. Do not describe this revision as an APK cloner.
+The app automatically checks the release on launch. After a package name and signing key are configured, a newly published release is downloaded, digest-checked when GitHub provides an asset digest, cloned, signed, and handed to Android's installer. Android still requires the user's confirmation.
+
+**Not yet validated:** the first GitHub Actions build and an on-device PGRazor clone/install. This is especially important because PGRazor keeps the game-compatible package identity; changing it may break game/native integrations. The clone engine does not rewrite arbitrary package-name strings in DEX or native libraries.
