@@ -230,6 +230,9 @@ public class MainActivity extends Activity {
     if (!pkg.matches("[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)+")) {
       statusText.setText("Enter a valid lowercase package name"); return;
     }
+    if (pkg.equals(getPackageName())) {
+      statusText.setText("The clone package cannot match PGRazor Updater"); return;
+    }
     statusText.setText("Preparing APK clone…");
     worker.execute(() -> {
       try {
