@@ -31,6 +31,7 @@ public class MainActivity extends Activity {
   private Uri keystoreUri;
   private String apkUrl, tag, expectedDigest;
   private long activeDownload = -1;
+  private boolean verificationInProgress = false;
   private BroadcastReceiver receiver;
 
   @Override public void onCreate(Bundle state) {
@@ -121,7 +122,17 @@ public class MainActivity extends Activity {
           if (hasCloneConfig()) {
             String cloneKey = t + "|" + packageInput.getText().toString().trim() + "|" + aliasInput.getText().toString().trim() + "|" + keystoreUri;
             String last = getPreferences(0).getString("lastClonedKey", "");
-            if (!cloneKey.equals(last)) downloadLatest();
+            if (!cloneKey.equals(last)) {
+              android.content.SharedPreferences prefs = getPreferences(0);
+              String cachedTag = prefs.getString("apkTag", "");
+              String cachedUri = prefs.getString("apkUri", null);
+              if (t.equals(cachedTag) && cachedUri != null) {
+                if (prefs.getBoolean("apkVerified", false)) cloneDownloaded();
+                else if (!verificationInProgress) verifyApk(Uri.parse(cachedUri));
+              } else if (activeDownload == -1) {
+                downloadLatest();
+              }
+            }
           }
         });
       } catch (Exception e) { runOnUiThread(() -> statusText.setText("Release check failed: " + e.getMessage())); }
@@ -151,7 +162,7 @@ public class MainActivity extends Activity {
     if (activeDownload != -1) { statusText.setText("A download is already running"); return; }
     activeDownload=downloads.enqueue(request);
     getPreferences(0).edit().putLong("downloadId", activeDownload).putBoolean("apkVerified", false)
-      .putString("apkTag", tag).putString("expectedDigest", expectedDigest).apply();
+      .putString("apkTag", tag).putString("expectedDigest", expectedDigest).remove("apkUri").apply();
     statusText.setText("Downloading " + tag + "…");
   }
 
@@ -172,13 +183,15 @@ public class MainActivity extends Activity {
       if (c==null || !c.moveToFirst()) throw new Exception("Download record missing");
       int state=c.getInt(c.getColumnIndexOrThrow(DownloadManager.COLUMN_STATUS));
       if (state!=DownloadManager.STATUS_SUCCESSFUL) throw new Exception("Download failed (status " + state + ")");
-      Uri uri=downloads.getUriForDownloadedFile(activeDownload);
+      Uri uri=downloads.getUriForDownloadedFile(completedId);
       getPreferences(0).edit().putString("apkUri",uri.toString()).putBoolean("apkVerified",false).apply();
       verifyApk(uri);
     } catch(Exception e) { statusText.setText(e.getMessage()); }
   }
 
   private void verifyApk(Uri uri) {
+    if (verificationInProgress) return;
+    verificationInProgress = true;
     worker.execute(() -> {
       try (InputStream in=getContentResolver().openInputStream(uri)) {
         if (in==null) throw new Exception("Cannot open downloaded APK");
@@ -190,11 +203,12 @@ public class MainActivity extends Activity {
         if(expectedDigest!=null && !expectedDigest.isEmpty() && !actual.equalsIgnoreCase(expectedDigest))
           throw new Exception("SHA-256 mismatch; refusing this APK");
         runOnUiThread(() -> {
+          verificationInProgress = false;
           statusText.setText("Download verified. SHA-256: " + actual);
           getPreferences(0).edit().putBoolean("apkVerified", true).apply();
           if (hasCloneConfig()) cloneDownloaded();
         });
-      } catch(Exception e) { runOnUiThread(() -> statusText.setText("Verification failed: " + e.getMessage())); }
+      } catch(Exception e) { runOnUiThread(() -> { verificationInProgress = false; statusText.setText("Verification failed: " + e.getMessage()); }); }
     });
   }
 
