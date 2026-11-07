@@ -68,9 +68,9 @@ public class MainActivity extends Activity {
     passwordInput = edit("Keystore password"); passwordInput.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_PASSWORD); root.addView(passwordInput);
     addButton(root, "Save configuration", v -> saveSettings());
     section(root, "Install");
-    addButton(root, "Install downloaded APK", v -> installDownloaded());
+    addButton(root, "Install original APK (optional)", v -> installDownloaded());
     statusText = label("Ready", 14, 0xffbdb8c8); statusText.setPadding(0,dp(18),0,0); root.addView(statusText);
-    TextView warning = label("Cloning is not enabled in this build. The package-name and keystore fields are saved settings only; the original APK is not modified or re-signed.", 12, 0xffffc27a);
+    TextView warning = label("Cloning changes the manifest package, custom permissions and provider authorities, then rebuilds and signs a separate APK. PGRazor native/game code may still depend on its original package identity.", 12, 0xffffc27a);
     warning.setPadding(0,dp(18),0,0); root.addView(warning);
     setContentView(scroll);
   }
@@ -113,6 +113,10 @@ public class MainActivity extends Activity {
           apkUrl=u; tag=t; expectedDigest=d;
           releaseText.setText("Latest: " + t + "\nPGRazor.apk found\nSHA-256: " + (d.isEmpty() ? "not published" : "available"));
           statusText.setText("Release check complete");
+          if (hasCloneConfig()) {
+            String last = getPreferences(0).getString("lastClonedTag", "");
+            if (!t.equals(last)) downloadLatest();
+          }
         });
       } catch (Exception e) { runOnUiThread(() -> statusText.setText("Release check failed: " + e.getMessage())); }
     });
@@ -138,7 +142,10 @@ public class MainActivity extends Activity {
     request.setMimeType("application/vnd.android.package-archive");
     request.setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED);
     request.setDestinationInExternalFilesDir(this, Environment.DIRECTORY_DOWNLOADS, "PGRazor-" + tag + ".apk");
-    activeDownload=downloads.enqueue(request); statusText.setText("Downloading " + tag + "…");
+    if (activeDownload != -1) { statusText.setText("A download is already running"); return; }
+    activeDownload=downloads.enqueue(request);
+    getPreferences(0).edit().putBoolean("apkVerified", false).putString("apkTag", tag).apply();
+    statusText.setText("Downloading " + tag + "…");
   }
 
   private void downloadComplete() {
@@ -148,7 +155,7 @@ public class MainActivity extends Activity {
       int state=c.getInt(c.getColumnIndexOrThrow(DownloadManager.COLUMN_STATUS));
       if (state!=DownloadManager.STATUS_SUCCESSFUL) throw new Exception("Download failed (status " + state + ")");
       Uri uri=downloads.getUriForDownloadedFile(activeDownload);
-      getPreferences(0).edit().putString("apkUri",uri.toString()).apply();
+      getPreferences(0).edit().putString("apkUri",uri.toString()).putBoolean("apkVerified",false).apply();
       verifyApk(uri);
     } catch(Exception e) { statusText.setText(e.getMessage()); }
   }
@@ -175,6 +182,9 @@ public class MainActivity extends Activity {
     String keyAlias = aliasInput.getText().toString().trim();
     String keyPassword = passwordInput.getText().toString();
     if (source == null) { statusText.setText("Download the official APK first"); return; }
+    if (!getPreferences(0).getBoolean("apkVerified", false)) {
+      statusText.setText("Wait for APK verification to finish"); return;
+    }
     if (keystoreUri == null || keyAlias.isEmpty() || keyPassword.isEmpty()) {
       statusText.setText("Import your keystore and enter its alias and password"); return;
     }
@@ -197,6 +207,8 @@ public class MainActivity extends Activity {
             Intent install = new Intent(Intent.ACTION_INSTALL_PACKAGE);
             install.setData(contentUri);
             install.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+            getPreferences(0).edit().putString("lastClonedTag",
+              getPreferences(0).getString("apkTag", tag == null ? "" : tag)).apply();
             startActivity(install);
           } catch (Exception e) {
             statusText.setText("Could not open installer: " + e.getMessage());
@@ -244,6 +256,14 @@ public class MainActivity extends Activity {
     if(u!=null) { keystoreUri=Uri.parse(u); keyText.setText("Selected: " + displayName(keystoreUri)); }
     try { passwordInput.setText(decrypt(p.getString("secret",null))); } catch(Exception ignored) {}
   }
+  private boolean hasCloneConfig() {
+    return packageInput != null
+      && !packageInput.getText().toString().trim().isEmpty()
+      && aliasInput != null && !aliasInput.getText().toString().trim().isEmpty()
+      && passwordInput != null && !passwordInput.getText().toString().isEmpty()
+      && keystoreUri != null;
+  }
+
   private void saveSettings() {
     String pkg=packageInput.getText().toString().trim();
     if(!pkg.isEmpty() && !pkg.matches("[A-Za-z][A-Za-z0-9_]*(\\.[A-Za-z][A-Za-z0-9_]*)+")) {
@@ -254,6 +274,7 @@ public class MainActivity extends Activity {
       getPreferences(0).edit().putString("packageName",pkg)
         .putString("alias",aliasInput.getText().toString().trim()).putString("secret",encrypted).apply();
       statusText.setText("Settings saved on this device");
+      checkRelease();
     } catch(Exception e) { statusText.setText("Could not protect password: " + e.getMessage()); }
   }
 
