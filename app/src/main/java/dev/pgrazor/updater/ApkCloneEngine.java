@@ -17,7 +17,8 @@ import java.security.*;
 import java.security.cert.Certificate;
 import java.security.cert.X509Certificate;
 import java.util.*;
-import javax.crypto.SecretKey;
+import java.util.zip.ZipEntry;
+import java.util.zip.ZipFile;
 
 public final class ApkCloneEngine {
     public interface Progress { void onProgress(String message); }
@@ -45,6 +46,8 @@ public final class ApkCloneEngine {
             if (in == null) throw new IOException("Cannot read downloaded APK");
             copy(in, out);
         }
+        validateApkArchive(original);
+        if (original.length() < 1024) throw new IOException("Source APK is unexpectedly small");
 
         progress.onProgress("Decoding manifest and resources…");
         int decodeResult = Main.execute(new String[]{"d", "-i", original.getAbsolutePath(),
@@ -58,6 +61,8 @@ public final class ApkCloneEngine {
         Element root = manifestDoc.getDocumentElement();
         String oldPackage = root.getAttribute("package");
         if (oldPackage.isEmpty()) throw new IOException("Original manifest has no package name");
+        if (!oldPackage.matches("[a-zA-Z][a-zA-Z0-9_]*(\\.[a-zA-Z][a-zA-Z0-9_]*)+"))
+            throw new IOException("Original APK contains an invalid package name: " + oldPackage);
         if (oldPackage.equals(newPackage)) throw new IOException("New package name is identical to the original");
         normalizeComponentNames(root, oldPackage);
         root.setAttribute("package", newPackage);
@@ -66,6 +71,8 @@ public final class ApkCloneEngine {
         updatePermissions(manifestDoc, oldPackage, newPackage);
         updateProviders(manifestDoc, oldPackage, newPackage, providerStringRefs);
         writeXml(manifestDoc, manifest);
+        if (!newPackage.equals(root.getAttribute("package")))
+            throw new SecurityException("Manifest package rewrite did not persist");
 
         if (!providerStringRefs.isEmpty()) {
             File strings = new File(decoded, "res/values/strings.xml");
@@ -86,6 +93,8 @@ public final class ApkCloneEngine {
         int buildResult = Main.execute(new String[]{"b", "-i", decoded.getAbsolutePath(),
                 "-o", rebuilt.getAbsolutePath(), "-f"});
         if (buildResult != 0 || !rebuilt.isFile()) throw new IOException("APKEditor rebuild failed (code " + buildResult + ")");
+        if (rebuilt.length() < 1024) throw new IOException("APKEditor produced an empty or incomplete APK");
+        validateApkArchive(rebuilt);
 
         progress.onProgress("Signing with your keystore…");
         signApk(rebuilt, signed, resolver, keyUri, alias.trim(), storePassword, keyPassword);
@@ -94,6 +103,9 @@ public final class ApkCloneEngine {
         if (!verification.isVerified()) {
             throw new SecurityException("Output signature verification failed: " + verification.getErrors());
         }
+        if (!signed.isFile() || signed.length() < 1024)
+            throw new IOException("Signing completed without a valid output APK");
+        validateApkArchive(signed);
         progress.onProgress("Clone created and signature verified");
         return signed;
     }
@@ -125,11 +137,12 @@ public final class ApkCloneEngine {
             Element permission = (Element) declared.item(i);
             String oldName = permission.getAttributeNS(ANDROID_NS, "name");
             if (oldName.isEmpty()) continue;
-            String newName = oldName.startsWith(".") ? oldName :
-                    oldName.startsWith(oldPkg + ".") ? newPkg + oldName.substring(oldPkg.length()) :
-                    newPkg + "_" + oldName;
+            String fullyQualified = oldName.startsWith(".") ? oldPkg + oldName : oldName;
+            if (!fullyQualified.equals(oldPkg) && !fullyQualified.startsWith(oldPkg + ".")) continue;
+            String newName = newPkg + fullyQualified.substring(oldPkg.length());
             permission.setAttributeNS(ANDROID_NS, "android:name", newName);
             replacements.put(oldName, newName);
+            replacements.put(fullyQualified, newName);
         }
         String[] usesTags = {"uses-permission", "uses-permission-sdk-23", "uses-permission-sdk-m"};
         for (String tag : usesTags) {
@@ -167,9 +180,27 @@ public final class ApkCloneEngine {
     }
 
     private static String rewriteAuthority(String value, String oldPkg, String newPkg) {
-        if (value.startsWith("@")) return value;
+        if (value == null || value.isEmpty() || value.startsWith("@")) return value;
+        if (value.equals(oldPkg)) return newPkg;
         if (value.startsWith(oldPkg + ".")) return newPkg + value.substring(oldPkg.length());
-        return newPkg + "_" + value;
+        // Authorities owned by other packages must remain untouched.
+        return value;
+    }
+
+    private static void validateApkArchive(File apk) throws IOException {
+        boolean manifest = false, dex = false;
+        try (ZipFile zip = new ZipFile(apk)) {
+            Enumeration<? extends ZipEntry> entries = zip.entries();
+            while (entries.hasMoreElements()) {
+                String name = entries.nextElement().getName();
+                if ("AndroidManifest.xml".equals(name)) manifest = true;
+                if (name.matches("classes([0-9]+)?\\.dex")) dex = true;
+            }
+        } catch (IOException e) {
+            throw new IOException("APK archive is corrupt or unreadable: " + apk.getName(), e);
+        }
+        if (!manifest) throw new IOException("APK is missing AndroidManifest.xml: " + apk.getName());
+        if (!dex) throw new IOException("APK contains no DEX bytecode: " + apk.getName());
     }
 
     private static Document parseXml(File file) throws Exception {
