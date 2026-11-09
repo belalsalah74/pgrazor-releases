@@ -14,9 +14,9 @@ jobs:
         with:
           distribution: temurin
           java-version: '17'
-      # GitHub's Ubuntu runner already includes the Android SDK and sdkmanager.
-      # Avoid android-actions/setup-android@v3: it tries to install the removed
-      # legacy SDK package "tools", which makes the setup step fail.
+      # The hosted runner already contains Android command-line tools. Do not
+      # use android-actions/setup-android@v3 here: it attempts to install the
+      # retired SDK package "tools".
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.9'
@@ -32,7 +32,20 @@ jobs:
           test -n "$JAR"
           cp "$JAR" "$GITHUB_WORKSPACE/app/libs/APKEditor.jar"
       - name: Install Android SDK 35
-        run: sdkmanager 'platforms;android-35' 'build-tools;35.0.0'
+        shell: bash
+        run: |
+          SDK_ROOT="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-/usr/local/lib/android/sdk}}"
+          SDKMANAGER="$(find "$SDK_ROOT/cmdline-tools" -type f -name sdkmanager -print -quit)"
+          if [ -z "$SDKMANAGER" ]; then
+            echo "::error::sdkmanager not found under $SDK_ROOT/cmdline-tools"
+            exit 1
+          fi
+          echo "ANDROID_HOME=$SDK_ROOT" >> "$GITHUB_ENV"
+          echo "ANDROID_SDK_ROOT=$SDK_ROOT" >> "$GITHUB_ENV"
+          echo "$SDK_ROOT/platform-tools" >> "$GITHUB_PATH"
+          echo "$(dirname "$SDKMANAGER")" >> "$GITHUB_PATH"
+          yes | "$SDKMANAGER" --sdk_root="$SDK_ROOT" --licenses >/dev/null
+          "$SDKMANAGER" --sdk_root="$SDK_ROOT" 'platforms;android-35' 'build-tools;35.0.0'
       - name: Build debug APK
         run: gradle --no-daemon assembleDebug --stacktrace
       - uses: actions/upload-artifact@v4
