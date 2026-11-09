@@ -11,6 +11,7 @@ import android.content.pm.PackageInfo;
 import androidx.core.content.FileProvider;
 import android.text.InputType;
 import android.view.ViewGroup;
+import android.view.View;
 import android.view.Gravity;
 import android.graphics.drawable.GradientDrawable;
 import android.widget.*;
