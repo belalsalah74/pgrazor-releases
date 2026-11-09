@@ -53,13 +53,28 @@ jobs:
           "$SDKMANAGER" --sdk_root="$SDK_ROOT" 'platforms;android-35' 'build-tools;35.0.0'
       - name: Build debug APK
         run: gradle --no-daemon assembleDebug --stacktrace
+      - name: Verify and stage release APK
+        shell: bash
+        run: |
+          set -euo pipefail
+          SOURCE="app/build/outputs/apk/debug/app-debug.apk"
+          RELEASE_APK="app/build/outputs/apk/debug/PGRazor.apk"
+          test -s "$SOURCE"
+          cp "$SOURCE" "$RELEASE_APK"
+          APKSIGNER="$ANDROID_SDK_ROOT/build-tools/35.0.0/apksigner"
+          test -x "$APKSIGNER"
+          "$APKSIGNER" verify --verbose "$RELEASE_APK"
+          ENTRIES="$(unzip -Z1 "$RELEASE_APK")"
+          grep -Fxq 'AndroidManifest.xml' <<< "$ENTRIES"
+          grep -Eq '^classes([0-9]+)?[.]dex$' <<< "$ENTRIES"
+          sha256sum "$RELEASE_APK"
       - name: Publish APK to GitHub Releases
         uses: softprops/action-gh-release@v2
         with:
           tag_name: v0.0.${{ github.run_number }}
           name: PGRazor Updater v0.0.${{ github.run_number }}
           target_commitish: ${{ github.sha }}
-          files: app/build/outputs/apk/debug/app-debug.apk
+          files: app/build/outputs/apk/debug/PGRazor.apk
           fail_on_unmatched_files: true
           generate_release_notes: true
           make_latest: true
@@ -67,4 +82,4 @@ jobs:
         shell: bash
         run: |
           echo "## PGRazor Updater APK" >> "$GITHUB_STEP_SUMMARY"
-          echo "[Download APK](https://github.com/${{ github.repository }}/releases/download/v0.0.${{ github.run_number }}/app-debug.apk)" >> "$GITHUB_STEP_SUMMARY"
+          echo "[Download APK](https://github.com/${{ github.repository }}/releases/download/v0.0.${{ github.run_number }}/PGRazor.apk)" >> "$GITHUB_STEP_SUMMARY"
