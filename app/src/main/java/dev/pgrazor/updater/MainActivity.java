@@ -21,6 +21,9 @@ import java.io.*;
 import java.net.*;
 import java.security.*;
 import java.util.Locale;
+import java.util.zip.ZipEntry;
+import java.util.zip.ZipFile;
+import com.android.apksig.ApkVerifier;
 import java.util.concurrent.*;
 import javax.crypto.*;
 import javax.crypto.spec.GCMParameterSpec;
@@ -62,6 +65,8 @@ public class MainActivity extends Activity {
   private String apkUrl, tag, expectedDigest;
   private long activeDownload = -1;
   private boolean verificationInProgress = false;
+  private boolean cloneInProgress = false;
+  private boolean releaseCheckInProgress = false;
   private BroadcastReceiver receiver;
 
   @Override public void onCreate(Bundle state) {
@@ -306,26 +311,41 @@ public class MainActivity extends Activity {
   }
 
   private void checkRelease() {
+    if (releaseCheckInProgress) return;
+    releaseCheckInProgress = true;
     statusText.setText("Checking for the latest release…");
     showProgress("Fetching release information from GitHub…", true);
     worker.execute(() -> {
       try {
         JSONObject release = requestJson(RELEASE_API);
-        String foundTag = release.optString("tag_name", "unknown");
+        String foundTag = release.optString("tag_name", "");
+        if (foundTag.trim().isEmpty()) throw new IOException("GitHub returned a release without a tag");
         JSONArray assets = release.optJSONArray("assets");
         String foundUrl = null, digest = "";
+        long assetSize = 0;
         if (assets != null) for (int i=0; i<assets.length(); i++) {
           JSONObject asset = assets.getJSONObject(i);
           if ("PGRazor.apk".equalsIgnoreCase(asset.optString("name"))) {
-            foundUrl = asset.optString("browser_download_url");
+            foundUrl = asset.optString("browser_download_url", "");
+            assetSize = asset.optLong("size", 0);
             String d = asset.optString("digest", "");
             if (d.startsWith("sha256:")) digest = d.substring(7);
             break;
           }
         }
-        if (foundUrl == null || foundUrl.isEmpty()) throw new Exception("Latest release has no PGRazor.apk asset");
+        if (foundUrl == null || foundUrl.isEmpty()) throw new IOException("Latest release has no PGRazor.apk asset");
+        Uri parsedUrl = Uri.parse(foundUrl);
+        if (!"https".equalsIgnoreCase(parsedUrl.getScheme()) ||
+            parsedUrl.getHost() == null ||
+            !(parsedUrl.getHost().equalsIgnoreCase("github.com") ||
+              parsedUrl.getHost().endsWith(".githubusercontent.com")))
+          throw new SecurityException("GitHub returned an unexpected APK download URL");
+        if (assetSize <= 0) throw new IOException("GitHub reports an empty or invalid APK asset");
+        if (!digest.isEmpty() && !digest.matches("(?i)[0-9a-f]{64}"))
+          throw new IOException("GitHub returned an invalid SHA-256 digest");
         final String u=foundUrl, t=foundTag, d=digest;
         runOnUiThread(() -> {
+          releaseCheckInProgress = false;
           apkUrl=u; tag=t; expectedDigest=d;
           releaseText.setText("Latest: " + t + "\nPGRazor.apk found\nSHA-256: " + (d.isEmpty() ? "not published" : "available"));
           statusText.setText("Release information is up to date");
@@ -346,16 +366,36 @@ public class MainActivity extends Activity {
             }
           }
         });
-      } catch (Exception e) { runOnUiThread(() -> { hideProgress(); statusText.setText("Release check failed: " + e.getMessage()); }); }
+      } catch (Exception e) { runOnUiThread(() -> {
+        releaseCheckInProgress = false;
+        hideProgress();
+        statusText.setText("Release check failed: " + safeMessage(e));
+      }); }
     });
   }
 
   private JSONObject requestJson(String address) throws Exception {
     HttpURLConnection c=(HttpURLConnection)new URL(address).openConnection();
     c.setConnectTimeout(15000); c.setReadTimeout(20000);
-    c.setRequestProperty("Accept","application/vnd.github+json"); c.setRequestProperty("User-Agent","PGRazor-Updater");
-    try (InputStream in=c.getInputStream()) { return new JSONObject(readAll(in)); }
-    finally { c.disconnect(); }
+    c.setRequestProperty("Accept","application/vnd.github+json");
+    c.setRequestProperty("User-Agent","PGRazor-Updater");
+    try {
+      int code = c.getResponseCode();
+      InputStream stream = code >= 200 && code < 300 ? c.getInputStream() : c.getErrorStream();
+      String body = stream == null ? "" : readAll(stream);
+      if (code < 200 || code >= 300) {
+        String detail = body;
+        try { detail = new JSONObject(body).optString("message", body); } catch (Exception ignored) {}
+        throw new IOException("GitHub API HTTP " + code + (detail.isEmpty() ? "" : ": " + detail));
+      }
+      return new JSONObject(body);
+    } finally { c.disconnect(); }
+  }
+
+  private String safeMessage(Throwable error) {
+    String message = error == null ? null : error.getMessage();
+    if (message == null || message.trim().isEmpty()) return error == null ? "Unknown error" : error.getClass().getSimpleName();
+    return message;
   }
   private String readAll(InputStream in) throws Exception {
     ByteArrayOutputStream out=new ByteArrayOutputStream(); byte[] b=new byte[8192]; int n;
@@ -364,13 +404,15 @@ public class MainActivity extends Activity {
   }
 
   private void downloadLatest() {
+    if (downloads == null) { statusText.setText("Android Download Manager is unavailable"); return; }
     if (apkUrl == null) { checkRelease(); statusText.setText("Release URL not ready; checking again"); return; }
+    if (activeDownload != -1) { statusText.setText("A download is already running"); return; }
+    try {
     DownloadManager.Request request = new DownloadManager.Request(Uri.parse(apkUrl));
     request.setTitle("PGRazor " + tag); request.setDescription("Downloading official release APK");
     request.setMimeType("application/vnd.android.package-archive");
     request.setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED);
     request.setDestinationInExternalFilesDir(this, Environment.DIRECTORY_DOWNLOADS, "PGRazor-" + tag + ".apk");
-    if (activeDownload != -1) { statusText.setText("A download is already running"); return; }
     activeDownload=downloads.enqueue(request);
     getPreferences(0).edit().putLong("downloadId", activeDownload).putBoolean("apkVerified", false)
       .putString("apkTag", tag).putString("expectedDigest", expectedDigest).remove("apkUri").apply();
@@ -378,14 +420,26 @@ public class MainActivity extends Activity {
     showProgress("Starting download…", true);
     mainHandler.removeCallbacks(downloadProgressPoll);
     mainHandler.post(downloadProgressPoll);
+    } catch (Exception e) {
+      activeDownload = -1;
+      getPreferences(0).edit().remove("downloadId").putBoolean("apkVerified", false).apply();
+      hideProgress();
+      statusText.setText("Could not start download: " + safeMessage(e));
+    }
   }
 
   private void inspectPendingDownload() {
     try (Cursor c = downloads.query(new DownloadManager.Query().setFilterById(activeDownload))) {
-      if (c == null || !c.moveToFirst()) return;
+      if (c == null || !c.moveToFirst()) {
+        activeDownload = -1;
+        getPreferences(0).edit().remove("downloadId").putBoolean("apkVerified", false).apply();
+        statusText.setText("Previous download record is no longer available. Download again.");
+        return;
+      }
       int state = c.getInt(c.getColumnIndexOrThrow(DownloadManager.COLUMN_STATUS));
       if (state == DownloadManager.STATUS_SUCCESSFUL || state == DownloadManager.STATUS_FAILED) downloadComplete();
-    } catch (Exception e) { statusText.setText("Could not resume download: " + e.getMessage()); }
+      else { showProgress("Resuming download…", true); mainHandler.post(downloadProgressPoll); }
+    } catch (Exception e) { statusText.setText("Could not resume download: " + safeMessage(e)); }
   }
 
   private void downloadComplete() {
@@ -397,12 +451,43 @@ public class MainActivity extends Activity {
     try (Cursor c=downloads.query(query)) {
       if (c==null || !c.moveToFirst()) throw new Exception("Download record missing");
       int state=c.getInt(c.getColumnIndexOrThrow(DownloadManager.COLUMN_STATUS));
-      if (state!=DownloadManager.STATUS_SUCCESSFUL) throw new Exception("Download failed (status " + state + ")");
+      if (state!=DownloadManager.STATUS_SUCCESSFUL) {
+        int reason = c.getInt(c.getColumnIndexOrThrow(DownloadManager.COLUMN_REASON));
+        throw new IOException(downloadFailureReason(state, reason));
+      }
       Uri uri=downloads.getUriForDownloadedFile(completedId);
+      if (uri == null) throw new IOException("Download completed but Android did not provide an APK file");
       getPreferences(0).edit().putString("apkUri",uri.toString()).putBoolean("apkVerified",false).apply();
       showProgress("Download complete · verifying APK integrity…", true);
       verifyApk(uri);
-    } catch(Exception e) { hideProgress(); statusText.setText(e.getMessage()); }
+    } catch(Exception e) {
+      getPreferences(0).edit().putBoolean("apkVerified", false).remove("apkUri").apply();
+      hideProgress();
+      statusText.setText("Download error: " + safeMessage(e));
+    }
+  }
+
+  private String downloadFailureReason(int state, int reason) {
+    if (state == DownloadManager.STATUS_PAUSED) {
+      switch (reason) {
+        case DownloadManager.PAUSED_WAITING_FOR_NETWORK: return "Download paused: waiting for a network connection";
+        case DownloadManager.PAUSED_WAITING_TO_RETRY: return "Download paused: Android will retry shortly";
+        case DownloadManager.PAUSED_QUEUED_FOR_WIFI: return "Download paused: waiting for Wi-Fi";
+        case DownloadManager.PAUSED_UNKNOWN: return "Download paused for an unknown reason";
+      }
+    }
+    switch (reason) {
+      case DownloadManager.ERROR_CANNOT_RESUME: return "Download failed: Android could not resume it";
+      case DownloadManager.ERROR_DEVICE_NOT_FOUND: return "Download failed: destination storage is unavailable";
+      case DownloadManager.ERROR_FILE_ALREADY_EXISTS: return "Download failed: destination file already exists";
+      case DownloadManager.ERROR_FILE_ERROR: return "Download failed: storage/file-system error";
+      case DownloadManager.ERROR_HTTP_DATA_ERROR: return "Download failed: HTTP data error";
+      case DownloadManager.ERROR_INSUFFICIENT_SPACE: return "Download failed: not enough storage space";
+      case DownloadManager.ERROR_TOO_MANY_REDIRECTS: return "Download failed: too many redirects";
+      case DownloadManager.ERROR_UNHANDLED_HTTP_CODE: return "Download failed: HTTP error " + reason;
+      case DownloadManager.ERROR_UNKNOWN: return "Download failed: unknown Download Manager error";
+      default: return "Download failed (status " + state + ", reason " + reason + ")";
+    }
   }
 
   private void verifyApk(Uri uri) {
@@ -410,27 +495,67 @@ public class MainActivity extends Activity {
     verificationInProgress = true;
     showProgress("Verifying APK SHA-256…", true);
     worker.execute(() -> {
-      try (InputStream in=getContentResolver().openInputStream(uri)) {
-        if (in==null) throw new Exception("Cannot open downloaded APK");
-        MessageDigest md=MessageDigest.getInstance("SHA-256"); byte[] b=new byte[16384]; int n;
-        while((n=in.read(b))>0) md.update(b,0,n);
+      File validationCopy = new File(getCacheDir(), "PGRazor-verify-" + System.currentTimeMillis() + ".apk");
+      try (InputStream in=getContentResolver().openInputStream(uri);
+           OutputStream out=new FileOutputStream(validationCopy)) {
+        if (in==null) throw new IOException("Cannot open downloaded APK");
+        MessageDigest md=MessageDigest.getInstance("SHA-256");
+        byte[] b=new byte[16384]; int n;
+        while((n=in.read(b))!=-1) { md.update(b,0,n); out.write(b,0,n); }
+        out.flush();
         StringBuilder hex=new StringBuilder();
         for(byte x:md.digest()) hex.append(String.format(Locale.US,"%02x",x));
         String actual=hex.toString();
-        if(expectedDigest!=null && !expectedDigest.isEmpty() && !actual.equalsIgnoreCase(expectedDigest))
-          throw new Exception("SHA-256 mismatch; refusing this APK");
+        String expected=getPreferences(0).getString("expectedDigest", expectedDigest);
+        if(expected!=null && !expected.isEmpty() && !actual.equalsIgnoreCase(expected))
+          throw new SecurityException("SHA-256 mismatch. The downloaded APK does not match GitHub's published digest.");
+        if(validationCopy.length() < 1024) throw new IOException("Downloaded file is too small to be a valid APK");
+        validateApkArchive(validationCopy);
+        ApkVerifier.Result signature = new ApkVerifier.Builder(validationCopy).build().verify();
+        if (!signature.isVerified())
+          throw new SecurityException("Original APK signature is invalid: " + signature.getErrors());
+        PackageInfo parsed = getPackageManager().getPackageArchiveInfo(validationCopy.getAbsolutePath(), 0);
+        if (parsed == null || parsed.packageName == null || parsed.packageName.trim().isEmpty())
+          throw new SecurityException("Android could not parse the downloaded APK manifest");
+        final String verifiedPackage = parsed.packageName;
         runOnUiThread(() -> {
           verificationInProgress = false;
           hideProgress();
-          statusText.setText("APK verified · SHA-256: " + actual);
-          getPreferences(0).edit().putBoolean("apkVerified", true).apply();
+          String digestNote = expected == null || expected.isEmpty() ? " (GitHub did not publish a reference digest)" : "";
+          statusText.setText("APK verified · " + verifiedPackage + " · SHA-256: " + actual + digestNote);
+          getPreferences(0).edit().putBoolean("apkVerified", true).putString("apkSha256", actual)
+            .putString("apkPackage", verifiedPackage).apply();
           if (hasCloneConfig()) cloneDownloaded();
         });
-      } catch(Exception e) { runOnUiThread(() -> { verificationInProgress = false; hideProgress(); statusText.setText("Verification failed: " + e.getMessage()); }); }
+      } catch(Exception e) {
+        runOnUiThread(() -> {
+          verificationInProgress = false;
+          getPreferences(0).edit().putBoolean("apkVerified", false).remove("apkUri").apply();
+          hideProgress();
+          statusText.setText("APK verification failed: " + safeMessage(e));
+        });
+      } finally { //noinspection ResultOfMethodCallIgnored
+        validationCopy.delete();
+      }
     });
   }
 
+  private void validateApkArchive(File apk) throws Exception {
+    boolean manifest = false, dex = false;
+    try (ZipFile zip = new ZipFile(apk)) {
+      java.util.Enumeration<? extends ZipEntry> entries = zip.entries();
+      while (entries.hasMoreElements()) {
+        String name = entries.nextElement().getName();
+        if ("AndroidManifest.xml".equals(name)) manifest = true;
+        if (name.matches("classes([0-9]+)?\\.dex")) dex = true;
+      }
+    } catch (Exception e) { throw new IOException("APK archive is corrupt or unreadable", e); }
+    if (!manifest) throw new IOException("APK is missing AndroidManifest.xml");
+    if (!dex) throw new IOException("APK contains no DEX bytecode");
+  }
+
   private void cloneDownloaded() {
+    if (cloneInProgress) { statusText.setText("A clone operation is already running"); return; }
     String source = getPreferences(0).getString("apkUri", null);
     String pkg = packageInput.getText().toString().trim();
     String keyAlias = aliasInput.getText().toString().trim();
@@ -450,6 +575,7 @@ public class MainActivity extends Activity {
     if (pkg.equals(getPackageName())) {
       statusText.setText("The clone package cannot match PGRazor Updater"); return;
     }
+    cloneInProgress = true;
     statusText.setText("Preparing APK clone…");
     showProgress("Building and signing cloned APK…", true);
     worker.execute(() -> {
@@ -458,9 +584,14 @@ public class MainActivity extends Activity {
         File output = ApkCloneEngine.cloneAndSign(getContentResolver(), Uri.parse(source),
           keystoreUri, keyAlias, storePassword, keyPassword, pkg, work,
           message -> runOnUiThread(() -> statusText.setText(message)));
+        validateApkArchive(output);
+        ApkVerifier.Result outputSignature = new ApkVerifier.Builder(output).build().verify();
+        if (!outputSignature.isVerified())
+          throw new SecurityException("Signed clone failed independent signature verification: " + outputSignature.getErrors());
         PackageInfo info = getPackageManager().getPackageArchiveInfo(output.getAbsolutePath(), 0);
         if (info == null || !pkg.equals(info.packageName))
           throw new SecurityException("Cloned APK package name verification failed");
+        if (output.length() < 1024) throw new IOException("Cloned APK output is unexpectedly small");
         runOnUiThread(() -> {
           try {
             Uri contentUri = FileProvider.getUriForFile(this, getPackageName() + ".fileprovider", output);
@@ -472,12 +603,17 @@ public class MainActivity extends Activity {
             getPreferences(0).edit().putString("pendingCloneKey", cloneKey).apply();
             startActivityForResult(install, 45);
           } catch (Exception e) {
+            cloneInProgress = false;
             hideProgress();
-            statusText.setText("Could not open installer: " + e.getMessage());
+            statusText.setText("Could not open installer: " + safeMessage(e));
           }
         });
       } catch (Exception e) {
-        runOnUiThread(() -> { hideProgress(); statusText.setText("Clone failed: " + e.getMessage()); });
+        runOnUiThread(() -> {
+          cloneInProgress = false;
+          hideProgress();
+          statusText.setText("Clone failed: " + safeMessage(e));
+        });
       }
     });
   }
@@ -485,9 +621,12 @@ public class MainActivity extends Activity {
   private void installDownloaded() {
     String saved=getPreferences(0).getString("apkUri",null);
     if(saved==null) { statusText.setText("Download the release first"); return; }
+    if (!getPreferences(0).getBoolean("apkVerified", false)) {
+      statusText.setText("APK has not passed integrity and signature verification"); return;
+    }
     Intent intent=new Intent(Intent.ACTION_INSTALL_PACKAGE);
     intent.setData(Uri.parse(saved)); intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
-    try { startActivity(intent); } catch(Exception e) { statusText.setText("Installer error: " + e.getMessage()); }
+    try { startActivity(intent); } catch(Exception e) { statusText.setText("Installer error: " + safeMessage(e)); }
   }
 
   private void chooseKeystore() {
@@ -497,22 +636,37 @@ public class MainActivity extends Activity {
   @Override protected void onActivityResult(int request,int result,Intent data) {
     super.onActivityResult(request,result,data);
     if (request == 45) {
+      cloneInProgress = false;
       String pending = getPreferences(0).getString("pendingCloneKey", null);
       if (result == RESULT_OK && pending != null) {
         getPreferences(0).edit().putString("lastClonedKey", pending).remove("pendingCloneKey").apply();
-        statusText.setText("Clone installed");
+        statusText.setText("Clone installation completed");
       } else {
         getPreferences(0).edit().remove("pendingCloneKey").apply();
         hideProgress();
-        statusText.setText("Installation was cancelled or not completed");
+        statusText.setText(result == RESULT_CANCELED
+          ? "Installation was cancelled. The verified clone is still available."
+          : "Installer closed without confirming installation. Check the app list before retrying.");
       }
       return;
     }
     if(request==44 && result==RESULT_OK && data!=null && data.getData()!=null) {
-      keystoreUri=data.getData();
-      getContentResolver().takePersistableUriPermission(keystoreUri,Intent.FLAG_GRANT_READ_URI_PERMISSION);
-      keyText.setText("Selected: " + displayName(keystoreUri));
-      getPreferences(0).edit().putString("keyUri",keystoreUri.toString()).apply();
+      try {
+        Uri selected = data.getData();
+        getContentResolver().takePersistableUriPermission(selected,Intent.FLAG_GRANT_READ_URI_PERMISSION);
+        try (InputStream in = getContentResolver().openInputStream(selected)) {
+          if (in == null) throw new IOException("Selected keystore cannot be opened");
+          if (in.read() == -1) throw new IOException("Selected keystore file is empty");
+        }
+        keystoreUri=selected;
+        keyText.setText("Selected: " + displayName(keystoreUri));
+        getPreferences(0).edit().putString("keyUri",keystoreUri.toString()).apply();
+        statusText.setText("Keystore file selected. Alias and password will be checked during signing.");
+      } catch (Exception e) {
+        keystoreUri = null;
+        keyText.setText("Keystore selection failed");
+        statusText.setText("Cannot use selected keystore: " + safeMessage(e));
+      }
     }
   }
   private String displayName(Uri uri) {
@@ -530,7 +684,8 @@ public class MainActivity extends Activity {
     aliasInput.setText(p.getString("alias",""));
     String u=p.getString("keyUri",null);
     if(u!=null) { keystoreUri=Uri.parse(u); keyText.setText("Selected: " + displayName(keystoreUri)); }
-    try { passwordInput.setText(decrypt(p.getString("secret",null))); } catch(Exception ignored) {}
+    try { passwordInput.setText(decrypt(p.getString("secret",null))); }
+    catch(Exception e) { p.edit().remove("secret").remove("keySecret").apply(); statusText.setText("Saved passwords could not be decrypted. Please enter them again."); }
     try { privateKeyPasswordInput.setText(decrypt(p.getString("keySecret",null))); } catch(Exception ignored) {}
   }
   private boolean hasCloneConfig() {
