@@ -6,13 +6,14 @@ Android updater and APK cloner for the original `jpitty03/PGRazor` release chann
 
 - Checks the latest published PGRazor GitHub release on launch.
 - Downloads the `PGRazor.apk` asset through Android DownloadManager.
-- Verifies the asset SHA-256 digest when GitHub publishes one.
+- Verifies the downloaded APK against GitHub's published asset size and SHA-256 digest when available.
+- Validates the APK ZIP structure, manifest, DEX payload, Android package parsing, and APK signature before allowing installation or cloning.
 - Saves the requested clone package name and keystore selection.
 - Encrypts the keystore and optional private-key passwords with Android Keystore (AES-GCM).
 - Decodes the APK manifest/resources with the pinned APKEditor engine.
 - Changes the manifest package name and updates custom permission names and provider authorities.
 - Preserves relative component class names against the original package namespace.
-- Rebuilds the APK, signs it with the selected JKS/PKCS12 private key using apksig, and verifies the resulting signature.
+- Rebuilds the APK, validates the rebuilt archive, signs it with the selected JKS/PKCS12 private key using apksig, and independently verifies the resulting signature and package name.
 - Opens Android's package installer using a scoped FileProvider URI.
 - After initial configuration, checks for a newer release on every launch and automatically downloads, clones, signs, and presents the installer when a new release is available.
 
@@ -32,7 +33,7 @@ Download the `PGRazor-Updater-debug` artifact from the Actions run.
 
 On later launches, a new PGRazor release is processed automatically. The manual download and clone buttons remain available.
 
-The app does not upload your keystore or password. The downloaded original APK remains unchanged.
+The app does not upload your keystore or password. The downloaded original APK remains unchanged. Failed downloads, digest/size mismatches, malformed APKs, invalid signatures, unreadable keystores, and clone/install errors are reported in the Activity panel; an APK that fails verification is blocked from installation and cloning.
 
 ## Important compatibility warning
 
