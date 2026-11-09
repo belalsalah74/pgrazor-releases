@@ -63,6 +63,7 @@ public class MainActivity extends Activity {
   private EditText packageInput, aliasInput, passwordInput, privateKeyPasswordInput;
   private Uri keystoreUri;
   private String apkUrl, tag, expectedDigest;
+  private long expectedSize = -1;
   private long activeDownload = -1;
   private boolean verificationInProgress = false;
   private boolean cloneInProgress = false;
@@ -347,6 +348,7 @@ public class MainActivity extends Activity {
         runOnUiThread(() -> {
           releaseCheckInProgress = false;
           apkUrl=u; tag=t; expectedDigest=d;
+          expectedSize=assetSize;
           releaseText.setText("Latest: " + t + "\nPGRazor.apk found\nSHA-256: " + (d.isEmpty() ? "not published" : "available"));
           statusText.setText("Release information is up to date");
           hideProgress();
@@ -415,7 +417,8 @@ public class MainActivity extends Activity {
     request.setDestinationInExternalFilesDir(this, Environment.DIRECTORY_DOWNLOADS, "PGRazor-" + tag + ".apk");
     activeDownload=downloads.enqueue(request);
     getPreferences(0).edit().putLong("downloadId", activeDownload).putBoolean("apkVerified", false)
-      .putString("apkTag", tag).putString("expectedDigest", expectedDigest).remove("apkUri").apply();
+      .putString("apkTag", tag).putString("expectedDigest", expectedDigest)
+      .putLong("expectedSize", expectedSize).remove("apkUri").apply();
     statusText.setText("Download started");
     showProgress("Starting download…", true);
     mainHandler.removeCallbacks(downloadProgressPoll);
@@ -507,6 +510,9 @@ public class MainActivity extends Activity {
         for(byte x:md.digest()) hex.append(String.format(Locale.US,"%02x",x));
         String actual=hex.toString();
         String expected=getPreferences(0).getString("expectedDigest", expectedDigest);
+        long publishedSize=getPreferences(0).getLong("expectedSize", expectedSize);
+        if(publishedSize > 0 && validationCopy.length() != publishedSize)
+          throw new SecurityException("APK size mismatch. Expected " + publishedSize + " bytes but received " + validationCopy.length() + ".");
         if(expected!=null && !expected.isEmpty() && !actual.equalsIgnoreCase(expected))
           throw new SecurityException("SHA-256 mismatch. The downloaded APK does not match GitHub's published digest.");
         if(validationCopy.length() < 1024) throw new IOException("Downloaded file is too small to be a valid APK");
@@ -680,6 +686,7 @@ public class MainActivity extends Activity {
     android.content.SharedPreferences p=getPreferences(0);
     tag = p.getString("apkTag", null);
     expectedDigest = p.getString("expectedDigest", null);
+    expectedSize = p.getLong("expectedSize", -1);
     packageInput.setText(p.getString("packageName", "com.nianticlabs.pokemongo"));
     aliasInput.setText(p.getString("alias",""));
     String u=p.getString("keyUri",null);
