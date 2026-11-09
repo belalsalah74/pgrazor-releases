@@ -218,8 +218,8 @@ public class MainActivity extends Activity {
     String pkg = packageInput.getText().toString().trim();
     String keyAlias = aliasInput.getText().toString().trim();
     String storePassword = passwordInput.getText().toString();
-    String keyPassword = privateKeyPasswordInput.getText().toString();
-    if (keyPassword.isEmpty()) keyPassword = storePassword;
+    String enteredKeyPassword = privateKeyPasswordInput.getText().toString();
+    final String keyPassword = enteredKeyPassword.isEmpty() ? storePassword : enteredKeyPassword;
     if (source == null) { statusText.setText("Download the official APK first"); return; }
     if (!getPreferences(0).getBoolean("apkVerified", false)) {
       statusText.setText("Wait for APK verification to finish"); return;
