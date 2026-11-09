@@ -345,10 +345,11 @@ public class MainActivity extends Activity {
         if (!digest.isEmpty() && !digest.matches("(?i)[0-9a-f]{64}"))
           throw new IOException("GitHub returned an invalid SHA-256 digest");
         final String u=foundUrl, t=foundTag, d=digest;
+        final long verifiedAssetSize = assetSize;
         runOnUiThread(() -> {
           releaseCheckInProgress = false;
           apkUrl=u; tag=t; expectedDigest=d;
-          expectedSize=assetSize;
+          expectedSize=verifiedAssetSize;
           releaseText.setText("Latest: " + t + "\nPGRazor.apk found\nSHA-256: " + (d.isEmpty() ? "not published" : "available"));
           statusText.setText("Release information is up to date");
           hideProgress();
