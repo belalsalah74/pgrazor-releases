@@ -10,6 +10,31 @@ android {
         versionCode 1
         versionName '0.1.0-alpha1'
     }
+
+    signingConfigs {
+        release {
+            def keystorePath = System.getenv('RELEASE_KEYSTORE_PATH')
+            def storePasswordValue = System.getenv('RELEASE_STORE_PASSWORD')
+            def keyAliasValue = System.getenv('RELEASE_KEY_ALIAS')
+            def keyPasswordValue = System.getenv('RELEASE_KEY_PASSWORD')
+            if (keystorePath && storePasswordValue && keyAliasValue && keyPasswordValue) {
+                storeFile file(keystorePath)
+                storePassword storePasswordValue
+                keyAlias keyAliasValue
+                keyPassword keyPasswordValue
+            }
+        }
+    }
+
+    buildTypes {
+        debug {
+            signingConfig signingConfigs.debug
+        }
+        release {
+            signingConfig signingConfigs.release
+            minifyEnabled false
+        }
+    }
 }
 
 dependencies {
