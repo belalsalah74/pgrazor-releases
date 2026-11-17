@@ -1,5 +1,8 @@
 plugins { id 'com.android.application' }
 
+// CI passes GITHUB_RUN_NUMBER so every release has a higher versionCode than the last one.
+def runNumber = (System.getenv('GITHUB_RUN_NUMBER') ?: '0') as int
+
 android {
     namespace 'dev.pgrazor.updater'
     compileSdk 35
@@ -7,38 +10,33 @@ android {
         applicationId 'dev.pgrazor.updater'
         minSdk 26
         targetSdk 35
-        versionCode 1
-        versionName '0.1.0-alpha1'
+        versionCode runNumber + 1
+        versionName '0.1.0-alpha2'
     }
-
     signingConfigs {
+        // Stable release key, supplied by CI secrets. Without it the build falls back to the debug key.
         release {
-            def keystorePath = System.getenv('RELEASE_KEYSTORE_PATH')
-            def storePasswordValue = System.getenv('RELEASE_STORE_PASSWORD')
-            def keyAliasValue = System.getenv('RELEASE_KEY_ALIAS')
-            def keyPasswordValue = System.getenv('RELEASE_KEY_PASSWORD')
-            if (keystorePath && storePasswordValue && keyAliasValue && keyPasswordValue) {
+            def keystorePath = System.getenv('SIGNING_KEYSTORE_FILE')
+            if (keystorePath) {
                 storeFile file(keystorePath)
-                storePassword storePasswordValue
-                keyAlias keyAliasValue
-                keyPassword keyPasswordValue
+                storePassword System.getenv('SIGNING_STORE_PASSWORD')
+                keyAlias System.getenv('SIGNING_KEY_ALIAS')
+                keyPassword System.getenv('SIGNING_KEY_PASSWORD')
             }
         }
     }
-
     buildTypes {
-        debug {
-            signingConfig signingConfigs.debug
-        }
         release {
-            signingConfig signingConfigs.release
             minifyEnabled false
+            signingConfig System.getenv('SIGNING_KEYSTORE_FILE') ? signingConfigs.release : signingConfigs.debug
         }
     }
 }
 
 dependencies {
+    // Downloaded by CI / scripts/fetch-apkeditor.sh (not committed).
     implementation files('libs/APKEditor.jar')
     implementation 'com.android.tools.build:apksig:8.7.3'
     implementation 'androidx.core:core:1.15.0'
+    testImplementation 'junit:junit:4.13.2'
 }
