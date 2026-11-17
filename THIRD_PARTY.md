@@ -3,9 +3,9 @@
 ## APKEditor
 
 - Project: https://github.com/REAndroid/APKEditor
-- Pinned source commit: `5d94bc08565e30e3e3bb7accbd83138e4d6a8e45`
+- Pinned release: `V1.4.9` (`APKEditor-1.4.9.jar`, SHA-256 `a9cd40df818845456be6d696de6110c89edf4b0a0580cb83438ed6b25a366e67`)
 - License: Apache License 2.0; see `LICENSES/APACHE-2.0.txt`.
-- The CI workflow builds APKEditor from source and bundles its executable classes into the updater.
+- The CI workflow downloads the official release jar, verifies the SHA-256 above and bundles it into the updater.
 
 ## Android apksig
 
