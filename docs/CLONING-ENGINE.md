@@ -15,7 +15,7 @@
 Morphe's public universal **Clone app** patch documents the same general behavior: change the package name, update custom permissions, and update provider authorities. Its source also warns that cloning is not compatible with every app and can cause crashes. See:
 
 - https://github.com/MorpheApp/morphe-patches
-- https://github.com/MorpheApp/morphe-patches/blob/main/patches/src/main/kotlin/app/morphe/patches/all/misc/clone/CloneAppPatch.kt
+- https://github.com/MorpheApp/morphe-patches/blob/main/patches/src/main/kotlin/app/revanced/patches/all/misc/clone/CloneAppPatch.kt
 - https://github.com/MorpheApp/morphe-patcher
 
 This project is not Morphe and must not use Morphe branding. Any code copied or adapted from GPL-licensed Morphe sources must preserve the required notices and comply with the applicable GPL terms. Prefer an independently implemented compatible workflow unless a deliberate GPL adoption is made.
@@ -28,7 +28,14 @@ Source: https://github.com/jpitty03/PGRazor
 
 ## Implementation in this repository
 
-The current source includes an APKEditor-based transformation pipeline. It decodes the binary manifest/resources while retaining raw DEX files, normalizes relative component class names against the original package, changes the manifest package, updates declared custom permissions and provider authorities (including string resources), rebuilds the APK, signs with the selected JKS/PKCS12 key using Android apksig, and verifies the resulting signature.
+The transformation pipeline lives in `ApkCloneEngine` (no `android.*` dependencies, so it is unit-testable on a desktop JVM). It decodes the binary manifest/resources with APKEditor while retaining raw DEX files, normalizes relative component class names against the original package, changes the manifest package, renames declared custom permissions and every reference to them (`uses-permission` and component `permission`/`readPermission`/`writePermission`), rewrites provider authorities (including `@string` authorities), rebuilds the APK, signs with the selected key using Android apksig, and verifies the resulting signature.
+
+Implementation notes learned from running it on a real APK:
+
+- APKEditor writes resources to `resources/package_N/res/values*/`, not `res/values/`. Authority strings are rewritten in place (raw text edit of only the matching `<string>` elements, across all locales) and cloning aborts if a referenced authority string cannot be found, because the clone would then conflict with the original app at install time.
+- APKEditor already page-aligns stored entries (`zipalign -c -P 16 -v 4` passes), so no separate zipalign step is needed.
+- Android has no `JKS` KeyStore provider. JKS keystores are parsed by a small built-in reader (including the legacy key-protection scheme); PKCS12 and BKS use the platform provider.
+- Intermediate files (original copy, decoded tree, unsigned rebuild) are deleted after signing.
 
 The app automatically checks the release on launch. After a package name and signing key are configured, a newly published release is downloaded, digest-checked when GitHub provides an asset digest, cloned, signed, and handed to Android's installer. Android still requires the user's confirmation.
 
